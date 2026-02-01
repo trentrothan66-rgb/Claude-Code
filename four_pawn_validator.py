@@ -249,6 +249,9 @@ def enumerate_all_positions() -> Set[int]:
 
         moves = generate_moves(pos)
         for new_pos, _ in moves:
+            if new_pos is None:
+                # Promotion - terminal position, don't add to queue
+                continue
             new_key = new_pos.to_key()
             if new_key not in visited:
                 visited.add(new_key)
