@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <chrono>
 #include <fstream>
+#include <algorithm>
 
 using namespace std;
 
@@ -80,6 +81,13 @@ struct KeyHash {
     }
 };
 
+// Tablebase entry
+struct TablebaseEntry {
+    int outcome;
+    int distance;
+    string best_move;
+};
+
 // Move structure
 struct Move {
     Position new_pos;
@@ -96,10 +104,11 @@ Move* make_move(const Position& pos, int from_file, int from_rank,
     int color = pos.to_move;
     int promo_rank = (color == WHITE) ? WHITE_PROMO_RANK : BLACK_PROMO_RANK;
 
+    string notation = string(1, 'b' + from_file) + to_string(from_rank + 1) +
+                     string(1, 'b' + to_file) + to_string(to_rank + 1);
+
     // Check for promotion
     if (to_rank == promo_rank) {
-        string notation = string(1, 'b' + from_file) + to_string(from_rank + 1) +
-                         string(1, 'b' + to_file) + to_string(to_rank + 1);
         return new Move(pos, notation, true);  // Promotion
     }
 
@@ -120,8 +129,6 @@ Move* make_move(const Position& pos, int from_file, int from_rank,
     new_pos.ep_file = double_push ? to_file : -1;
     new_pos.to_move = 1 - color;
 
-    string notation = string(1, 'b' + from_file) + to_string(from_rank + 1) +
-                     string(1, 'b' + to_file) + to_string(to_rank + 1);
     return new Move(new_pos, notation, false);
 }
 
@@ -300,6 +307,126 @@ unordered_set<__uint128_t, KeyHash> enumerate_positions() {
     return visited;
 }
 
+// Retrograde analysis
+unordered_map<__uint128_t, TablebaseEntry, KeyHash> retrograde_analysis(
+    const unordered_set<__uint128_t, KeyHash>& all_positions) {
+
+    cout << "\nPerforming retrograde analysis..." << endl;
+
+    unordered_map<__uint128_t, TablebaseEntry, KeyHash> tablebase;
+
+    // Find all terminal positions
+    for (const auto& pos_key : all_positions) {
+        Position pos = Position::from_key(pos_key);
+        auto [is_term, outcome] = is_terminal(pos);
+        if (is_term) {
+            tablebase[pos_key] = {outcome, 0, ""};
+        }
+    }
+
+    cout << "Found " << tablebase.size() << " terminal positions" << endl;
+
+    // Iterative solving
+    int max_iterations = 200;
+    int iteration = 0;
+
+    while (iteration < max_iterations) {
+        iteration++;
+        size_t newly_solved = 0;
+
+        for (const auto& pos_key : all_positions) {
+            if (tablebase.find(pos_key) != tablebase.end()) continue;
+
+            Position pos = Position::from_key(pos_key);
+
+            // Try to solve this position
+            vector<Move*> moves = generate_moves(pos);
+
+            bool all_moves_solved = true;
+            vector<tuple<int, int, string>> move_evals;
+
+            for (Move* move : moves) {
+                if (move->is_promotion) {
+                    // Immediate win
+                    int outcome = (pos.to_move == WHITE) ? WHITE_WIN : BLACK_WIN;
+                    move_evals.push_back({outcome, 1, move->notation});
+                } else {
+                    __uint128_t new_key = move->new_pos.to_key();
+                    auto it = tablebase.find(new_key);
+                    if (it != tablebase.end()) {
+                        move_evals.push_back({it->second.outcome, it->second.distance + 1, move->notation});
+                    } else {
+                        all_moves_solved = false;
+                        break;
+                    }
+                }
+            }
+
+            // Clean up moves
+            for (auto m : moves) delete m;
+
+            if (!all_moves_solved || move_evals.empty()) continue;
+
+            // Apply minimax
+            auto best = move_evals[0];
+
+            if (pos.to_move == WHITE) {
+                // White maximizes
+                for (const auto& eval : move_evals) {
+                    auto [outcome, dist, move_str] = eval;
+                    auto [best_outcome, best_dist, best_move] = best;
+
+                    if (outcome == WHITE_WIN && best_outcome != WHITE_WIN) {
+                        best = eval;
+                    } else if (outcome == WHITE_WIN && best_outcome == WHITE_WIN && dist < best_dist) {
+                        best = eval;
+                    } else if (outcome == DRAW && best_outcome == BLACK_WIN) {
+                        best = eval;
+                    } else if (outcome == BLACK_WIN && best_outcome == BLACK_WIN && dist > best_dist) {
+                        best = eval;
+                    }
+                }
+            } else {
+                // Black maximizes
+                for (const auto& eval : move_evals) {
+                    auto [outcome, dist, move_str] = eval;
+                    auto [best_outcome, best_dist, best_move] = best;
+
+                    if (outcome == BLACK_WIN && best_outcome != BLACK_WIN) {
+                        best = eval;
+                    } else if (outcome == BLACK_WIN && best_outcome == BLACK_WIN && dist < best_dist) {
+                        best = eval;
+                    } else if (outcome == DRAW && best_outcome == WHITE_WIN) {
+                        best = eval;
+                    } else if (outcome == WHITE_WIN && best_outcome == WHITE_WIN && dist > best_dist) {
+                        best = eval;
+                    }
+                }
+            }
+
+            auto [outcome, dist, move_str] = best;
+            tablebase[pos_key] = {outcome, dist, move_str};
+            newly_solved++;
+        }
+
+        cout << "Iteration " << iteration << ": solved " << newly_solved
+             << " new positions, total " << tablebase.size() << "/" << all_positions.size() << endl;
+
+        if (newly_solved == 0) break;
+    }
+
+    // Mark any remaining as draws
+    for (const auto& pos_key : all_positions) {
+        if (tablebase.find(pos_key) == tablebase.end()) {
+            tablebase[pos_key] = {DRAW, 0, ""};
+        }
+    }
+
+    cout << "Solved " << tablebase.size() << " positions in " << iteration << " iterations" << endl;
+
+    return tablebase;
+}
+
 int main() {
     cout << "============================================================" << endl;
     cout << "Six Pawn Chess - C++ Retrograde Analysis Solver" << endl;
@@ -314,11 +441,50 @@ int main() {
     auto enum_duration = chrono::duration_cast<chrono::seconds>(enum_time - start_time).count();
     cout << "Enumeration completed in " << enum_duration << " seconds" << endl;
 
-    // TODO: Implement retrograde analysis
-    // TODO: Save tablebase
+    // Retrograde analysis
+    auto tablebase = retrograde_analysis(all_positions);
+
+    auto retro_time = chrono::steady_clock::now();
+    auto retro_duration = chrono::duration_cast<chrono::seconds>(retro_time - enum_time).count();
+    cout << "Retrograde analysis completed in " << retro_duration << " seconds" << endl;
+
+    // Analyze starting position
+    cout << "\n============================================================" << endl;
+    cout << "STARTING POSITION ANALYSIS" << endl;
+    cout << "============================================================" << endl;
+
+    Position start;
+    start.white_pawns = 0;
+    start.black_pawns = 0;
+    start.to_move = WHITE;
+    start.ep_file = -1;
+
+    for (int file = 0; file < FILES; file++) {
+        start.white_pawns |= (1ULL << (WHITE_START_RANK * FILES + file));
+        start.black_pawns |= (1ULL << (BLACK_START_RANK * FILES + file));
+    }
+
+    __uint128_t start_key = start.to_key();
+    auto it = tablebase.find(start_key);
+
+    if (it != tablebase.end()) {
+        string outcome_str;
+        switch (it->second.outcome) {
+            case WHITE_WIN: outcome_str = "White wins"; break;
+            case BLACK_WIN: outcome_str = "Black wins"; break;
+            case DRAW: outcome_str = "Draw"; break;
+            default: outcome_str = "Unknown"; break;
+        }
+
+        cout << "Result: " << outcome_str << endl;
+        cout << "Distance to terminal: " << it->second.distance << " moves" << endl;
+        cout << "Best first move: " << it->second.best_move << endl;
+    } else {
+        cout << "ERROR: Starting position not in tablebase!" << endl;
+    }
 
     cout << "\n============================================================" << endl;
-    cout << "Enumeration phase completed!" << endl;
+    cout << "Solver completed successfully!" << endl;
     cout << "============================================================" << endl;
 
     return 0;
