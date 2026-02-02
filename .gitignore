@@ -3,3 +3,5 @@ __pycache__/
 *.pkl
 *.log
 .DS_Store
+six_pawn_solver_cpp
+cpp_solver_output.log
