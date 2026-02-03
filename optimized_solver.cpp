@@ -36,6 +36,7 @@ const int BLACK_PROMO_RANK = 0;  // Rank 1
 // File names
 const char* CANONICAL_POSITIONS_FILE = "canonical_positions.bin";
 const char* TABLEBASE_FILE = "tablebase.bin";
+const char* POSITION_CHECKPOINT_FILE = "position_gen_checkpoint.bin";
 
 // ============================================================
 // POSITION STRUCTURE
@@ -357,98 +358,169 @@ pair<bool, int8_t> is_terminal(const Position& pos) {
 }
 
 // ============================================================
-// POSITION GENERATION
+// CHECKPOINT FUNCTIONS
 // ============================================================
 
-pair<unordered_set<__uint128_t, KeyHash>, unordered_map<__uint128_t, __uint128_t, KeyHash>>
-enumerate_positions() {
+void save_position_checkpoint(const unordered_set<__uint128_t, KeyHash>& canonical_positions,
+                               const deque<__uint128_t>& queue,
+                               size_t total_visited) {
+    ofstream out(POSITION_CHECKPOINT_FILE, ios::binary);
+
+    // Save total visited count
+    out.write((char*)&total_visited, sizeof(total_visited));
+
+    // Save canonical positions
+    size_t count = canonical_positions.size();
+    out.write((char*)&count, sizeof(count));
+    for (const __uint128_t& key : canonical_positions) {
+        out.write((char*)&key, sizeof(key));
+    }
+
+    // Save queue
+    size_t queue_size = queue.size();
+    out.write((char*)&queue_size, sizeof(queue_size));
+    for (const __uint128_t& key : queue) {
+        out.write((char*)&key, sizeof(key));
+    }
+
+    out.close();
+}
+
+bool load_position_checkpoint(unordered_set<__uint128_t, KeyHash>& canonical_positions,
+                               deque<__uint128_t>& queue,
+                               size_t& total_visited) {
+    ifstream in(POSITION_CHECKPOINT_FILE, ios::binary);
+    if (!in) return false;
+
+    // Load total visited count
+    in.read((char*)&total_visited, sizeof(total_visited));
+
+    // Load canonical positions
+    size_t count;
+    in.read((char*)&count, sizeof(count));
+    for (size_t i = 0; i < count; i++) {
+        __uint128_t key;
+        in.read((char*)&key, sizeof(key));
+        canonical_positions.insert(key);
+    }
+
+    // Load queue
+    size_t queue_size;
+    in.read((char*)&queue_size, sizeof(queue_size));
+    for (size_t i = 0; i < queue_size; i++) {
+        __uint128_t key;
+        in.read((char*)&key, sizeof(key));
+        queue.push_back(key);
+    }
+
+    in.close();
+    cout << "Loaded checkpoint: " << count << " canonical positions, "
+         << queue_size << " in queue, " << total_visited << " total visited" << endl;
+    return true;
+}
+
+// ============================================================
+// POSITION GENERATION (MEMORY OPTIMIZED)
+// ============================================================
+
+unordered_set<__uint128_t, KeyHash> enumerate_positions() {
     cout << "\n============================================================" << endl;
-    cout << "POSITION GENERATION (Forward BFS)" << endl;
+    cout << "POSITION GENERATION (Forward BFS with Checkpointing)" << endl;
     cout << "============================================================\n" << endl;
 
     unordered_set<__uint128_t, KeyHash> canonical_positions;
-    unordered_map<__uint128_t, __uint128_t, KeyHash> symmetry_map;
-    unordered_set<__uint128_t, KeyHash> all_visited;
-    deque<Position> queue;
+    deque<__uint128_t> queue;  // Store keys instead of Position structs
+    size_t total_visited = 0;
 
-    // Initial position
-    Position start;
-    start.white_to_move = true;
-    start.en_passant_file = -1;
-    for (int file = 0; file < FILES; file++) {
-        start.white_pawns |= (1ULL << Position::square(file, WHITE_START_RANK));
-        start.black_pawns |= (1ULL << Position::square(file, BLACK_START_RANK));
+    // Try to load checkpoint
+    if (load_position_checkpoint(canonical_positions, queue, total_visited)) {
+        cout << "Resuming from checkpoint...\n" << endl;
+    } else {
+        // Initial position
+        Position start;
+        start.white_to_move = true;
+        start.en_passant_file = -1;
+        for (int file = 0; file < FILES; file++) {
+            start.white_pawns |= (1ULL << Position::square(file, WHITE_START_RANK));
+            start.black_pawns |= (1ULL << Position::square(file, BLACK_START_RANK));
+        }
+
+        Position start_canonical = start.canonical();
+        __uint128_t start_key = start_canonical.to_key();
+
+        canonical_positions.insert(start_key);
+        queue.push_back(start_key);
+        total_visited = 1;
     }
-
-    __uint128_t start_key = start.to_key();
-    Position start_canonical = start.canonical();
-    __uint128_t start_canonical_key = start_canonical.to_key();
-
-    canonical_positions.insert(start_canonical_key);
-    symmetry_map[start_key] = start_canonical_key;
-    all_visited.insert(start_key);
-    queue.push_back(start);
 
     auto start_time = chrono::steady_clock::now();
     auto last_report = start_time;
-    size_t positions_explored = 0;
-    size_t checkpoint_counter = 0;
+    auto last_checkpoint = start_time;
+    size_t checkpoint_counter = canonical_positions.size();
 
     while (!queue.empty()) {
-        Position pos = queue.front();
+        __uint128_t pos_key = queue.front();
         queue.pop_front();
-        positions_explored++;
+
+        Position pos = Position::from_key(pos_key);
 
         // Progress report every 5 seconds
         auto now = chrono::steady_clock::now();
         if (chrono::duration_cast<chrono::seconds>(now - last_report).count() >= 5) {
             auto elapsed = chrono::duration_cast<chrono::seconds>(now - start_time).count();
+            double ratio = (double)canonical_positions.size() / total_visited;
             cout << "  Canonical: " << canonical_positions.size()
+                 << " | Total visited: " << total_visited
                  << " | Queue: " << queue.size()
+                 << " | Compression: " << fixed << setprecision(2) << ratio
                  << " | Time: " << elapsed << "s" << endl;
             last_report = now;
+        }
+
+        // Checkpoint every 1M canonical positions
+        if (canonical_positions.size() - checkpoint_counter >= 1000000) {
+            auto elapsed = chrono::duration_cast<chrono::seconds>(now - start_time).count();
+            cout << "  [Checkpoint at " << canonical_positions.size()
+                 << " positions, " << elapsed << "s]" << endl;
+            save_position_checkpoint(canonical_positions, queue, total_visited);
+            checkpoint_counter = canonical_positions.size();
+            last_checkpoint = now;
         }
 
         // Generate all legal moves
         vector<Move> moves = generate_moves(pos);
         for (const Move& move : moves) {
             Position new_pos = apply_move(pos, move);
-            __uint128_t new_key = new_pos.to_key();
+            Position canonical = new_pos.canonical();
+            __uint128_t canonical_key = canonical.to_key();
 
-            if (all_visited.find(new_key) == all_visited.end()) {
-                all_visited.insert(new_key);
-
-                Position canonical = new_pos.canonical();
-                __uint128_t canonical_key = canonical.to_key();
-
+            // Check if we've seen this canonical position before
+            if (canonical_positions.find(canonical_key) == canonical_positions.end()) {
                 canonical_positions.insert(canonical_key);
-                symmetry_map[new_key] = canonical_key;
-
-                queue.push_back(new_pos);
+                queue.push_back(canonical_key);
             }
-        }
 
-        // Checkpoint every 100k positions
-        if (canonical_positions.size() - checkpoint_counter >= 100000) {
-            checkpoint_counter = canonical_positions.size();
-            auto elapsed = chrono::duration_cast<chrono::seconds>(now - start_time).count();
-            cout << "  [Checkpoint] Canonical: " << canonical_positions.size()
-                 << " | Total visited: " << all_visited.size()
-                 << " | Time: " << elapsed << "s" << endl;
+            total_visited++;
         }
     }
+
+    // Final checkpoint
+    save_position_checkpoint(canonical_positions, queue, total_visited);
 
     auto end_time = chrono::steady_clock::now();
     auto duration = chrono::duration_cast<chrono::seconds>(end_time - start_time).count();
 
     cout << "\nPosition generation complete:" << endl;
     cout << "  Canonical positions: " << canonical_positions.size() << endl;
-    cout << "  Total unique positions: " << all_visited.size() << endl;
+    cout << "  Total positions generated: " << total_visited << endl;
     cout << "  Compression ratio: " << fixed << setprecision(2)
-         << (double)canonical_positions.size() / all_visited.size() << endl;
-    cout << "  Time: " << duration << " seconds" << endl;
+         << (double)canonical_positions.size() / total_visited << endl;
+    cout << "  Time: " << duration << " seconds (" << (duration/60) << " minutes)" << endl;
 
-    return {canonical_positions, symmetry_map};
+    // Clean up checkpoint file
+    remove(POSITION_CHECKPOINT_FILE);
+
+    return canonical_positions;
 }
 
 // ============================================================
@@ -456,8 +528,7 @@ enumerate_positions() {
 // ============================================================
 
 unordered_map<__uint128_t, Evaluation, KeyHash> retrograde_analysis(
-    const unordered_set<__uint128_t, KeyHash>& canonical_positions,
-    const unordered_map<__uint128_t, __uint128_t, KeyHash>& symmetry_map) {
+    const unordered_set<__uint128_t, KeyHash>& canonical_positions) {
 
     cout << "\n============================================================" << endl;
     cout << "RETROGRADE ANALYSIS" << endl;
@@ -474,6 +545,7 @@ unordered_map<__uint128_t, Evaluation, KeyHash> retrograde_analysis(
     cout << "Building predecessor graph..." << endl;
     size_t terminal_count = 0;
     size_t pos_count = 0;
+    auto last_report = start_time;
 
     for (const __uint128_t& pos_key : canonical_positions) {
         Position pos = Position::from_key(pos_key);
@@ -500,8 +572,10 @@ unordered_map<__uint128_t, Evaluation, KeyHash> retrograde_analysis(
         }
 
         pos_count++;
-        if (pos_count % 100000 == 0) {
+        auto now = chrono::steady_clock::now();
+        if (pos_count % 100000 == 0 && chrono::duration_cast<chrono::seconds>(now - last_report).count() >= 3) {
             cout << "  Processed " << pos_count << "/" << canonical_positions.size() << " positions" << endl;
+            last_report = now;
         }
     }
 
@@ -511,7 +585,7 @@ unordered_map<__uint128_t, Evaluation, KeyHash> retrograde_analysis(
     // Step 2: Propagate evaluations backward
     cout << "\nPropagating evaluations backward..." << endl;
     size_t evaluated = terminal_count;
-    size_t last_report = evaluated;
+    size_t last_report_count = evaluated;
     auto last_report_time = chrono::steady_clock::now();
 
     while (!eval_queue.empty()) {
@@ -570,13 +644,13 @@ unordered_map<__uint128_t, Evaluation, KeyHash> retrograde_analysis(
                     evaluated++;
 
                     // Progress report every 50k evaluations
-                    if (evaluated - last_report >= 50000) {
+                    if (evaluated - last_report_count >= 50000) {
                         auto now = chrono::steady_clock::now();
                         auto elapsed = chrono::duration_cast<chrono::seconds>(now - start_time).count();
                         cout << "  Evaluated: " << evaluated << "/" << canonical_positions.size()
                              << " | Queue: " << eval_queue.size()
                              << " | Time: " << elapsed << "s" << endl;
-                        last_report = evaluated;
+                        last_report_count = evaluated;
                     }
                 }
             }
@@ -588,7 +662,7 @@ unordered_map<__uint128_t, Evaluation, KeyHash> retrograde_analysis(
 
     cout << "\nRetrograde analysis complete:" << endl;
     cout << "  Positions evaluated: " << evaluated << endl;
-    cout << "  Time: " << duration << " seconds" << endl;
+    cout << "  Time: " << duration << " seconds (" << (duration/60) << " minutes)" << endl;
 
     return tablebase;
 }
@@ -773,6 +847,7 @@ void print_statistics(const unordered_map<__uint128_t, Evaluation, KeyHash>& tab
 int main(int argc, char* argv[]) {
     cout << "\n============================================================" << endl;
     cout << "SIX PAWN CHESS - COMPLETE SOLVER" << endl;
+    cout << "Memory-Optimized with Checkpointing" << endl;
     cout << "============================================================" << endl;
 
     bool load_existing = false;
@@ -783,7 +858,6 @@ int main(int argc, char* argv[]) {
     auto total_start = chrono::steady_clock::now();
 
     unordered_set<__uint128_t, KeyHash> canonical_positions;
-    unordered_map<__uint128_t, __uint128_t, KeyHash> symmetry_map;
     unordered_map<__uint128_t, Evaluation, KeyHash> tablebase;
 
     if (load_existing) {
@@ -792,9 +866,7 @@ int main(int argc, char* argv[]) {
 
         if (canonical_positions.empty()) {
             cout << "No existing canonical positions found. Running full generation..." << endl;
-            auto [positions, sym_map] = enumerate_positions();
-            canonical_positions = positions;
-            symmetry_map = sym_map;
+            canonical_positions = enumerate_positions();
             save_canonical_positions(canonical_positions);
         }
 
@@ -802,24 +874,15 @@ int main(int argc, char* argv[]) {
 
         if (tablebase.empty()) {
             cout << "\nNo existing tablebase found. Running retrograde analysis..." << endl;
-            // Build symmetry map if needed
-            if (symmetry_map.empty()) {
-                cout << "Rebuilding symmetry map..." << endl;
-                for (const __uint128_t& key : canonical_positions) {
-                    symmetry_map[key] = key;
-                }
-            }
-            tablebase = retrograde_analysis(canonical_positions, symmetry_map);
+            tablebase = retrograde_analysis(canonical_positions);
             save_tablebase(tablebase);
         }
     } else {
         // Full generation and solve
-        auto [positions, sym_map] = enumerate_positions();
-        canonical_positions = positions;
-        symmetry_map = sym_map;
+        canonical_positions = enumerate_positions();
         save_canonical_positions(canonical_positions);
 
-        tablebase = retrograde_analysis(canonical_positions, symmetry_map);
+        tablebase = retrograde_analysis(canonical_positions);
         save_tablebase(tablebase);
     }
 
