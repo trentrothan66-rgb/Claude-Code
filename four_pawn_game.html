@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Four Pawn Chess - Play Against Perfect AI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 30px;
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 25px;
+            font-size: 0.95em;
+        }
+
+        .game-area {
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .board-container {
+            flex: 1;
+            min-width: 320px;
+            max-width: 480px;
+        }
+
+        .board-wrapper {
+            position: relative;
+        }
+
+        .rank-labels {
+            position: absolute;
+            left: -25px;
+            top: 0;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+            font-weight: bold;
+            color: #555;
+            font-size: 14px;
+        }
+
+        .rank-label {
+            height: 12.5%;
+            display: flex;
+            align-items: center;
+        }
+
+        .file-labels {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 5px;
+            font-weight: bold;
+            color: #555;
+            font-size: 14px;
+            padding: 0 5%;
+        }
+
+        #chessboard {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            grid-template-rows: repeat(8, 1fr);
+            width: 100%;
+            aspect-ratio: 1;
+            border: 3px solid #333;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+
+        .square {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3em;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .square.light {
+            background-color: #f0d9b5;
+        }
+
+        .square.dark {
+            background-color: #b58863;
+        }
+
+        .square.inactive {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .square.selected {
+            background-color: #7fc97f !important;
+            box-shadow: inset 0 0 0 3px #2d5f2d;
+        }
+
+        .square.legal-move {
+            background-color: #fdd835 !important;
+        }
+
+        .square.legal-move::after {
+            content: '';
+            position: absolute;
+            width: 25%;
+            height: 25%;
+            background-color: rgba(0,0,0,0.2);
+            border-radius: 50%;
+        }
+
+        .square.legal-capture::after {
+            width: 80%;
+            height: 80%;
+            border: 3px solid rgba(0,0,0,0.3);
+            background-color: transparent;
+        }
+
+        .square:not(.inactive):hover {
+            filter: brightness(0.9);
+        }
+
+        .info-panel {
+            flex: 1;
+            min-width: 280px;
+            max-width: 400px;
+        }
+
+        .controls {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .control-row {
+            margin-bottom: 15px;
+        }
+
+        .control-row:last-child {
+            margin-bottom: 0;
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #333;
+        }
+
+        select, button {
+            width: 100%;
+            padding: 10px;
+            font-size: 1em;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .button-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .evaluation {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .eval-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .eval-result {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .eval-result.white-win {
+            color: #2e7d32;
+        }
+
+        .eval-result.black-win {
+            color: #c62828;
+        }
+
+        .eval-result.draw {
+            color: #f57c00;
+        }
+
+        .eval-distance {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .eval-best-move {
+            color: #1565c0;
+            font-size: 0.95em;
+            margin-top: 8px;
+        }
+
+        .status {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border-left: 4px solid #2196f3;
+        }
+
+        .status-text {
+            color: #1565c0;
+            font-weight: 500;
+        }
+
+        .move-history {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .move-history-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .move-list {
+            font-family: monospace;
+            font-size: 0.9em;
+            line-height: 1.6;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-title {
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .modal-close {
+            background: #e0e0e0;
+            color: #333;
+            margin-top: 20px;
+        }
+
+        .rules-section {
+            margin-bottom: 20px;
+        }
+
+        .rules-section h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .rules-section ul {
+            margin-left: 20px;
+            line-height: 1.8;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+
+            h1 {
+                font-size: 1.5em;
+            }
+
+            .square {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚔️ Four Pawn Chess ⚔️</h1>
+        <p class="subtitle">Play against the perfect AI powered by complete game solution</p>
+
+        <div class="game-area">
+            <div class="board-container">
+                <div class="board-wrapper">
+                    <div class="rank-labels">
+                        <div class="rank-label">8</div>
+                        <div class="rank-label">7</div>
+                        <div class="rank-label">6</div>
+                        <div class="rank-label">5</div>
+                        <div class="rank-label">4</div>
+                        <div class="rank-label">3</div>
+                        <div class="rank-label">2</div>
+                        <div class="rank-label">1</div>
+                    </div>
+                    <div id="chessboard"></div>
+                    <div class="file-labels">
+                        <span>a</span><span>b</span><span>c</span><span>d</span>
+                        <span>e</span><span>f</span><span>g</span><span>h</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="info-panel">
+                <div class="controls">
+                    <div class="control-row">
+                        <label>Play as:</label>
+                        <select id="colorChoice">
+                            <option value="white">White</option>
+                            <option value="black">Black</option>
+                        </select>
+                    </div>
+                    <div class="control-row">
+                        <button id="newGameBtn">New Game</button>
+                    </div>
+                    <div class="control-row button-group">
+                        <button id="undoBtn">Undo Move</button>
+                        <button id="flipBtn">Flip Board</button>
+                    </div>
+                    <div class="control-row">
+                        <button id="rulesBtn" class="modal-close">View Rules</button>
+                    </div>
+                </div>
+
+                <div class="evaluation">
+                    <div class="eval-title">Position Evaluation:</div>
+                    <div class="eval-result" id="evalResult">—</div>
+                    <div class="eval-distance" id="evalDistance"></div>
+                    <div class="eval-best-move" id="evalBestMove"></div>
+                </div>
+
+                <div class="status">
+                    <div class="status-text" id="statusText">Select your color and start a new game</div>
+                </div>
+
+                <div class="move-history">
+                    <div class="move-history-title">Move History:</div>
+                    <div class="move-list" id="moveHistory">—</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="rulesModal" class="modal">
+        <div class="modal-content">
+            <h2 class="modal-title">Six Pawn Chess Rules</h2>
+
+            <div class="rules-section">
+                <h3>Setup</h3>
+                <ul>
+                    <li>Played on a standard 8×8 chessboard</li>
+                    <li>Only files c through f are used (4 files)</li>
+                    <li>White starts with pawns on c2, d2, e2, f2</li>
+                    <li>Black starts with pawns on c7, d7, e7, f7</li>
+                </ul>
+            </div>
+
+            <div class="rules-section">
+                <h3>Movement</h3>
+                <ul>
+                    <li>Pawns move exactly as in standard chess</li>
+                    <li>Move forward one square to an empty square</li>
+                    <li>Move forward two squares from starting rank</li>
+                    <li>Capture diagonally forward</li>
+                    <li>En passant captures are allowed</li>
+                </ul>
+            </div>
+
+            <div class="rules-section">
+                <h3>Win Conditions</h3>
+                <ul>
+                    <li><strong>Promotion:</strong> Advance a pawn to the opponent's back rank (White to rank 8, Black to rank 1) - immediate win</li>
+                    <li><strong>Extinction:</strong> Capture all opponent's pawns - immediate win</li>
+                    <li><strong>Stalemate with advantage:</strong> If no legal moves exist and one side has more pawns, that side wins</li>
+                </ul>
+            </div>
+
+            <div class="rules-section">
+                <h3>Draw Condition</h3>
+                <ul>
+                    <li>No legal moves exist and both sides have equal number of pawns</li>
+                </ul>
+            </div>
+
+            <button class="modal-close" id="closeRulesBtn">Close</button>
+        </div>
+    </div>
+
+    <script>
+        // Game constants
+        const FILES = 4; // c through f
+        const RANKS = 8;
+        const WHITE = 0;
+        const BLACK = 1;
+        const FILE_NAMES = ['c', 'd', 'e', 'f'];
+        const FIRST_FILE = 2; // c is file index 2
+        const LAST_FILE = 5; // f is file index 5
+
+        // Game state
+        let gameState = {
+            board: Array(8).fill(null).map(() => Array(8).fill(null)),
+            toMove: WHITE,
+            epFile: -1,
+            playerColor: WHITE,
+            selectedSquare: null,
+            legalMoves: [],
+            moveHistory: [],
+            gameOver: false,
+            flipped: false
+        };
+
+        // UI Elements
+        const chessboard = document.getElementById('chessboard');
+        const statusText = document.getElementById('statusText');
+        const evalResult = document.getElementById('evalResult');
+        const evalDistance = document.getElementById('evalDistance');
+        const evalBestMove = document.getElementById('evalBestMove');
+        const moveHistoryDiv = document.getElementById('moveHistory');
+
+        // Initialize the board
+        function initBoard() {
+            // Clear board
+            for (let rank = 0; rank < 8; rank++) {
+                for (let file = 0; file < 8; file++) {
+                    gameState.board[rank][file] = null;
+                }
+            }
+
+            // Set up white pawns on rank 1 (index 1)
+            for (let file = 2; file <= 5; file++) {
+                gameState.board[1][file] = WHITE;
+            }
+
+            // Set up black pawns on rank 6 (index 6)
+            for (let file = 2; file <= 5; file++) {
+                gameState.board[6][file] = BLACK;
+            }
+
+            gameState.toMove = WHITE;
+            gameState.epFile = -1;
+            gameState.selectedSquare = null;
+            gameState.legalMoves = [];
+            gameState.moveHistory = [];
+            gameState.gameOver = false;
+
+            renderBoard();
+            updateStatus();
+            updateEvaluation();
+            updateMoveHistory();
+
+            // If player is black, AI makes first move
+            if (gameState.playerColor === BLACK) {
+                setTimeout(makeAIMove, 500);
+            }
+        }
+
+        // Render the chess board
+        function renderBoard() {
+            chessboard.innerHTML = '';
+
+            for (let rank = 7; rank >= 0; rank--) {
+                for (let file = 0; file < 8; file++) {
+                    const displayRank = gameState.flipped ? (7 - rank) : rank;
+                    const displayFile = gameState.flipped ? (7 - file) : file;
+
+                    const square = document.createElement('div');
+                    square.className = 'square';
+                    square.dataset.rank = displayRank;
+                    square.dataset.file = displayFile;
+
+                    // Color the square
+                    if ((displayRank + displayFile) % 2 === 0) {
+                        square.classList.add('dark');
+                    } else {
+                        square.classList.add('light');
+                    }
+
+                    // Mark inactive squares (a and h files)
+                    if (displayFile === 0 || displayFile === 7) {
+                        square.classList.add('inactive');
+                    }
+
+                    // Add piece
+                    const piece = gameState.board[displayRank][displayFile];
+                    if (piece === WHITE) {
+                        square.textContent = '♙';
+                    } else if (piece === BLACK) {
+                        square.textContent = '♟';
+                    }
+
+                    // Highlight selected square
+                    if (gameState.selectedSquare &&
+                        gameState.selectedSquare.rank === displayRank &&
+                        gameState.selectedSquare.file === displayFile) {
+                        square.classList.add('selected');
+                    }
+
+                    // Highlight legal moves
+                    const legalMove = gameState.legalMoves.find(
+                        m => m.toRank === displayRank && m.toFile === displayFile
+                    );
+                    if (legalMove) {
+                        square.classList.add('legal-move');
+                        if (legalMove.isCapture) {
+                            square.classList.add('legal-capture');
+                        }
+                    }
+
+                    square.addEventListener('click', () => handleSquareClick(displayRank, displayFile));
+                    chessboard.appendChild(square);
+                }
+            }
+        }
+
+        // Handle square click
+        function handleSquareClick(rank, file) {
+            if (gameState.gameOver) return;
+            if (file < 2 || file > 5) return; // Inactive files (only c-f)
+            if (gameState.toMove !== gameState.playerColor) return; // Not player's turn
+
+            const piece = gameState.board[rank][file];
+
+            // If a legal move is clicked, make the move
+            const legalMove = gameState.legalMoves.find(
+                m => m.toRank === rank && m.toFile === file
+            );
+            if (legalMove) {
+                makeMove(legalMove);
+                gameState.selectedSquare = null;
+                gameState.legalMoves = [];
+                renderBoard();
+                updateStatus();
+                updateEvaluation();
+                updateMoveHistory();
+
+                // Check for game over
+                if (checkGameOver()) {
+                    return;
+                }
+
+                // AI's turn
+                setTimeout(makeAIMove, 500);
+                return;
+            }
+
+            // Select piece
+            if (piece === gameState.toMove) {
+                gameState.selectedSquare = {rank, file};
+                gameState.legalMoves = generateLegalMoves(rank, file);
+                renderBoard();
+            } else {
+                gameState.selectedSquare = null;
+                gameState.legalMoves = [];
+                renderBoard();
+            }
+        }
+
+        // Generate legal moves for a piece
+        function generateLegalMoves(rank, file) {
+            const moves = [];
+            const piece = gameState.board[rank][file];
+            if (piece !== gameState.toMove) return moves;
+
+            const direction = piece === WHITE ? 1 : -1;
+            const startRank = piece === WHITE ? 1 : 6;
+
+            // Forward one
+            const newRank = rank + direction;
+            if (newRank >= 0 && newRank < 8 && !gameState.board[newRank][file]) {
+                moves.push({
+                    fromRank: rank,
+                    fromFile: file,
+                    toRank: newRank,
+                    toFile: file,
+                    isCapture: false,
+                    isEP: false,
+                    isPromotion: newRank === (piece === WHITE ? 7 : 0)
+                });
+
+                // Forward two from start
+                if (rank === startRank) {
+                    const newRank2 = rank + 2 * direction;
+                    if (!gameState.board[newRank2][file]) {
+                        moves.push({
+                            fromRank: rank,
+                            fromFile: file,
+                            toRank: newRank2,
+                            toFile: file,
+                            isCapture: false,
+                            isEP: false,
+                            isDoublePush: true,
+                            isPromotion: false
+                        });
+                    }
+                }
+            }
+
+            // Captures
+            for (const df of [-1, 1]) {
+                const newFile = file + df;
+                if (newFile >= 1 && newFile <= 6 && newRank >= 0 && newRank < 8) {
+                    const target = gameState.board[newRank][newFile];
+                    if (target !== null && target !== piece) {
+                        moves.push({
+                            fromRank: rank,
+                            fromFile: file,
+                            toRank: newRank,
+                            toFile: newFile,
+                            isCapture: true,
+                            isEP: false,
+                            isPromotion: newRank === (piece === WHITE ? 7 : 0)
+                        });
+                    }
+                }
+            }
+
+            // En passant
+            if (gameState.epFile >= 1 && gameState.epFile <= 6) {
+                if (piece === WHITE && rank === 4 && Math.abs(file - gameState.epFile) === 1) {
+                    if (gameState.board[4][gameState.epFile] === BLACK) {
+                        moves.push({
+                            fromRank: rank,
+                            fromFile: file,
+                            toRank: 5,
+                            toFile: gameState.epFile,
+                            isCapture: true,
+                            isEP: true,
+                            isPromotion: false
+                        });
+                    }
+                } else if (piece === BLACK && rank === 3 && Math.abs(file - gameState.epFile) === 1) {
+                    if (gameState.board[3][gameState.epFile] === WHITE) {
+                        moves.push({
+                            fromRank: rank,
+                            fromFile: file,
+                            toRank: 2,
+                            toFile: gameState.epFile,
+                            isCapture: true,
+                            isEP: true,
+                            isPromotion: false
+                        });
+                    }
+                }
+            }
+
+            return moves;
+        }
+
+        // Make a move
+        function makeMove(move) {
+            const piece = gameState.board[move.fromRank][move.fromFile];
+
+            // Save to history
+            const moveNotation = formatMove(move);
+            gameState.moveHistory.push({
+                move: moveNotation,
+                boardState: JSON.parse(JSON.stringify(gameState.board)),
+                toMove: gameState.toMove,
+                epFile: gameState.epFile
+            });
+
+            // Move piece
+            gameState.board[move.fromRank][move.fromFile] = null;
+            gameState.board[move.toRank][move.toFile] = piece;
+
+            // Handle en passant capture
+            if (move.isEP) {
+                const victimRank = piece === WHITE ? 4 : 3;
+                gameState.board[victimRank][move.toFile] = null;
+            }
+
+            // Update en passant file
+            if (move.isDoublePush) {
+                gameState.epFile = move.toFile;
+            } else {
+                gameState.epFile = -1;
+            }
+
+            // Switch turn
+            gameState.toMove = 1 - gameState.toMove;
+
+            // Check for promotion (game over)
+            if (move.isPromotion) {
+                gameState.gameOver = true;
+            }
+        }
+
+        // Format move notation
+        function formatMove(move) {
+            const fromFile = FILE_NAMES[move.fromFile - FIRST_FILE];
+            const toFile = FILE_NAMES[move.toFile - FIRST_FILE];
+            const fromRank = move.fromRank + 1;
+            const toRank = move.toRank + 1;
+
+            let notation = fromFile + fromRank;
+            if (move.isCapture) {
+                notation += 'x';
+            }
+            notation += toFile + toRank;
+            if (move.isEP) {
+                notation += ' e.p.';
+            }
+            if (move.isPromotion) {
+                notation += '!';
+            }
+
+            return notation;
+        }
+
+        // Check if game is over
+        function checkGameOver() {
+            // Check for promotion
+            for (let file = 2; file <= 5; file++) {
+                if (gameState.board[7][file] === WHITE || gameState.board[0][file] === BLACK) {
+                    const winner = gameState.board[7][file] === WHITE ? 'White' : 'Black';
+                    statusText.textContent = `Game Over! ${winner} wins by promotion!`;
+                    gameState.gameOver = true;
+                    return true;
+                }
+            }
+
+            // Count pawns
+            let whitePawns = 0, blackPawns = 0;
+            for (let rank = 0; rank < 8; rank++) {
+                for (let file = 2; file <= 5; file++) {
+                    if (gameState.board[rank][file] === WHITE) whitePawns++;
+                    if (gameState.board[rank][file] === BLACK) blackPawns++;
+                }
+            }
+
+            // Check extinction
+            if (whitePawns === 0) {
+                statusText.textContent = 'Game Over! Black wins by extinction!';
+                gameState.gameOver = true;
+                return true;
+            }
+            if (blackPawns === 0) {
+                statusText.textContent = 'Game Over! White wins by extinction!';
+                gameState.gameOver = true;
+                return true;
+            }
+
+            // Check for any legal moves
+            let hasLegalMoves = false;
+            for (let rank = 0; rank < 8; rank++) {
+                for (let file = 2; file <= 5; file++) {
+                    if (gameState.board[rank][file] === gameState.toMove) {
+                        const moves = generateLegalMoves(rank, file);
+                        if (moves.length > 0) {
+                            hasLegalMoves = true;
+                            break;
+                        }
+                    }
+                }
+                if (hasLegalMoves) break;
+            }
+
+            if (!hasLegalMoves) {
+                if (whitePawns > blackPawns) {
+                    statusText.textContent = 'Game Over! White wins by stalemate with more pawns!';
+                } else if (blackPawns > whitePawns) {
+                    statusText.textContent = 'Game Over! Black wins by stalemate with more pawns!';
+                } else {
+                    statusText.textContent = 'Game Over! Draw by stalemate with equal pawns!';
+                }
+                gameState.gameOver = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        // Make AI move
+        async function makeAIMove() {
+            if (gameState.gameOver) return;
+            if (gameState.toMove === gameState.playerColor) return;
+
+            statusText.textContent = 'AI is thinking...';
+
+            // Try to get best move from tablebase
+            try {
+                const response = await fetch('http://localhost:8000/lookup', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        board: gameState.board,
+                        to_move: gameState.toMove,
+                        ep_file: gameState.epFile
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.found && data.best_move) {
+                        // Parse the best move string and find matching move
+                        const allMoves = getAllLegalMoves();
+                        const bestMove = findMoveByNotation(allMoves, data.best_move);
+
+                        if (bestMove) {
+                            setTimeout(() => {
+                                makeMove(bestMove);
+                                renderBoard();
+                                updateStatus();
+                                updateEvaluation();
+                                updateMoveHistory();
+                                checkGameOver();
+                            }, 500);
+                            return;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.log('Tablebase lookup failed, using fallback');
+            }
+
+            // Fallback: make a random legal move
+            const allMoves = getAllLegalMoves();
+            if (allMoves.length === 0) {
+                checkGameOver();
+                return;
+            }
+
+            const move = allMoves[Math.floor(Math.random() * allMoves.length)];
+
+            setTimeout(() => {
+                makeMove(move);
+                renderBoard();
+                updateStatus();
+                updateEvaluation();
+                updateMoveHistory();
+                checkGameOver();
+            }, 500);
+        }
+
+        // Get all legal moves for current position
+        function getAllLegalMoves() {
+            const allMoves = [];
+            for (let rank = 0; rank < 8; rank++) {
+                for (let file = 2; file <= 5; file++) {
+                    if (gameState.board[rank][file] === gameState.toMove) {
+                        const moves = generateLegalMoves(rank, file);
+                        allMoves.push(...moves);
+                    }
+                }
+            }
+            return allMoves;
+        }
+
+        // Find move by notation string
+        function findMoveByNotation(moves, notation) {
+            // Parse notation like "b2b4" or "c3xd4"
+            notation = notation.replace(/\s+e\.p\./g, '').replace(/!/g, '');
+            const isCapture = notation.includes('x');
+            const cleanNotation = notation.replace('x', '');
+
+            for (const move of moves) {
+                const moveNotation = formatMove(move).replace(/\s+e\.p\./g, '').replace(/!/g, '').replace('x', '');
+                if (moveNotation === cleanNotation) {
+                    return move;
+                }
+            }
+            return null;
+        }
+
+        // Update status
+        function updateStatus() {
+            if (gameState.gameOver) return;
+
+            const turn = gameState.toMove === WHITE ? 'White' : 'Black';
+            if (gameState.toMove === gameState.playerColor) {
+                statusText.textContent = `Your turn (${turn})`;
+            } else {
+                statusText.textContent = `AI's turn (${turn})`;
+            }
+        }
+
+        // Update evaluation
+        async function updateEvaluation() {
+            if (gameState.gameOver) {
+                evalResult.textContent = 'Game Over';
+                evalResult.className = 'eval-result';
+                evalDistance.textContent = '';
+                evalBestMove.textContent = '';
+                return;
+            }
+
+            // Try to get evaluation from tablebase
+            try {
+                const response = await fetch('http://localhost:8000/lookup', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        board: gameState.board,
+                        to_move: gameState.toMove,
+                        ep_file: gameState.epFile
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+
+                    if (data.found) {
+                        // Display outcome
+                        if (data.outcome === 'white_win') {
+                            evalResult.textContent = 'White Wins';
+                            evalResult.className = 'eval-result white-win';
+                        } else if (data.outcome === 'black_win') {
+                            evalResult.textContent = 'Black Wins';
+                            evalResult.className = 'eval-result black-win';
+                        } else if (data.outcome === 'draw') {
+                            evalResult.textContent = 'Draw';
+                            evalResult.className = 'eval-result draw';
+                        } else {
+                            evalResult.textContent = 'Unknown';
+                            evalResult.className = 'eval-result';
+                        }
+
+                        evalDistance.textContent = `Distance to end: ${data.distance} moves`;
+
+                        if (data.best_move) {
+                            evalBestMove.textContent = `Best move: ${data.best_move}`;
+                        } else {
+                            evalBestMove.textContent = '';
+                        }
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.log('Tablebase lookup failed:', e);
+            }
+
+            // Fallback if tablebase not available
+            evalResult.textContent = 'Tablebase not loaded';
+            evalResult.className = 'eval-result';
+            evalDistance.textContent = 'Start the tablebase server to see evaluation';
+            evalBestMove.textContent = '';
+        }
+
+        // Update move history
+        function updateMoveHistory() {
+            if (gameState.moveHistory.length === 0) {
+                moveHistoryDiv.textContent = '—';
+                return;
+            }
+
+            let historyText = '';
+            for (let i = 0; i < gameState.moveHistory.length; i++) {
+                if (i % 2 === 0) {
+                    historyText += `${Math.floor(i / 2) + 1}. `;
+                }
+                historyText += gameState.moveHistory[i].move + ' ';
+                if (i % 2 === 1) {
+                    historyText += '\n';
+                }
+            }
+            moveHistoryDiv.textContent = historyText;
+        }
+
+        // Event listeners
+        document.getElementById('newGameBtn').addEventListener('click', () => {
+            const color = document.getElementById('colorChoice').value;
+            gameState.playerColor = color === 'white' ? WHITE : BLACK;
+            initBoard();
+        });
+
+        document.getElementById('undoBtn').addEventListener('click', () => {
+            if (gameState.moveHistory.length === 0) return;
+            if (gameState.gameOver) gameState.gameOver = false;
+
+            // Undo last move (or two moves if vs AI)
+            const undoCount = gameState.playerColor === gameState.toMove ? 1 : 2;
+
+            for (let i = 0; i < undoCount && gameState.moveHistory.length > 0; i++) {
+                const lastState = gameState.moveHistory.pop();
+                gameState.board = lastState.boardState;
+                gameState.toMove = lastState.toMove;
+                gameState.epFile = lastState.epFile;
+            }
+
+            gameState.selectedSquare = null;
+            gameState.legalMoves = [];
+            renderBoard();
+            updateStatus();
+            updateEvaluation();
+            updateMoveHistory();
+        });
+
+        document.getElementById('flipBtn').addEventListener('click', () => {
+            gameState.flipped = !gameState.flipped;
+            renderBoard();
+        });
+
+        document.getElementById('rulesBtn').addEventListener('click', () => {
+            document.getElementById('rulesModal').classList.add('active');
+        });
+
+        document.getElementById('closeRulesBtn').addEventListener('click', () => {
+            document.getElementById('rulesModal').classList.remove('active');
+        });
+
+        // Initialize on load
+        initBoard();
+    </script>
+</body>
+</html>

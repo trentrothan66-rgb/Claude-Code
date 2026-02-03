@@ -8,6 +8,7 @@ Expected: White wins, with 1.d4 as the winning first move.
 
 import sys
 import time
+import pickle
 from collections import deque
 from typing import Optional, List, Tuple, Set, Dict
 
@@ -411,6 +412,14 @@ def main():
         print("ERROR: Starting position not in tablebase!")
 
     print("\n" + start_pos.__str__())
+
+    # Save tablebase for use with web UI
+    print("\n" + "=" * 60)
+    print("Saving tablebase...")
+    with open('four_pawn_tablebase.pkl', 'wb') as f:
+        pickle.dump(tablebase, f)
+    print("Tablebase saved to four_pawn_tablebase.pkl")
+    print("=" * 60)
 
 
 if __name__ == '__main__':
