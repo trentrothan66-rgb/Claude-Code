@@ -541,21 +541,22 @@ unordered_set<__uint128_t, KeyHash> enumerate_positions() {
 }
 
 // ============================================================
-// RETROGRADE ANALYSIS (Memory-Optimized: No Predecessor Graph)
+// RETROGRADE ANALYSIS (Batched Predecessor Graph)
 // ============================================================
 
 unordered_map<__uint128_t, Evaluation, KeyHash> retrograde_analysis(
     const unordered_set<__uint128_t, KeyHash>& canonical_positions) {
 
     cout << "\n============================================================" << endl;
-    cout << "RETROGRADE ANALYSIS (Iterative - No Predecessor Graph)" << endl;
+    cout << "RETROGRADE ANALYSIS (Batched Predecessor Graph)" << endl;
     cout << "============================================================\n" << endl;
 
     unordered_map<__uint128_t, Evaluation, KeyHash> tablebase;
+    unordered_map<__uint128_t, int, KeyHash> successor_count;
     auto start_time = chrono::steady_clock::now();
 
-    // Step 1: Initialize all positions and find terminals
-    cout << "Initializing tablebase..." << endl;
+    // Step 1: Initialize tablebase and count successors
+    cout << "Initializing tablebase and counting successors..." << endl;
     size_t terminal_count = 0;
 
     for (const __uint128_t& pos_key : canonical_positions) {
@@ -568,6 +569,9 @@ unordered_map<__uint128_t, Evaluation, KeyHash> retrograde_analysis(
             terminal_count++;
         } else {
             tablebase[pos_key] = Evaluation(); // UNKNOWN
+            // Count successors for this position
+            vector<Move> moves = generate_moves(pos);
+            successor_count[pos_key] = moves.size();
         }
     }
 
@@ -575,98 +579,147 @@ unordered_map<__uint128_t, Evaluation, KeyHash> retrograde_analysis(
     cout << "  Terminal positions: " << terminal_count << endl;
     cout << "  Unknown positions: " << (canonical_positions.size() - terminal_count) << endl;
 
-    // Step 2: Iterative backward propagation
-    cout << "\nIterative backward propagation..." << endl;
-    size_t evaluated = terminal_count;
-    int iteration = 0;
-    size_t newly_evaluated = 0;
-    auto last_report = start_time;
+    // Step 2: Batched backward propagation
+    cout << "\nBatched backward propagation..." << endl;
+
+    const size_t BATCH_SIZE = 5000000; // Process 5M positions at a time
+    vector<__uint128_t> position_vec(canonical_positions.begin(), canonical_positions.end());
+    size_t total_evaluated = terminal_count;
+    int pass = 0;
+    size_t last_evaluated = 0;
 
     do {
-        iteration++;
-        newly_evaluated = 0;
+        pass++;
+        last_evaluated = total_evaluated;
 
-        // Iterate through all positions
-        for (const __uint128_t& pos_key : canonical_positions) {
-            // Skip if already evaluated
-            if (tablebase[pos_key].result != RESULT_UNKNOWN) continue;
+        cout << "\n=== Pass " << pass << " ===" << endl;
 
-            Position pos = Position::from_key(pos_key);
-            vector<Move> moves = generate_moves(pos);
+        // Process in batches
+        for (size_t batch_start = 0; batch_start < position_vec.size(); batch_start += BATCH_SIZE) {
+            size_t batch_end = min(batch_start + BATCH_SIZE, position_vec.size());
+            size_t batch_size = batch_end - batch_start;
 
-            // Check if ALL successors are evaluated
-            bool all_successors_evaluated = true;
-            vector<pair<int8_t, uint8_t>> successor_evals; // (result, depth)
+            cout << "  Batch " << (batch_start / BATCH_SIZE + 1)
+                 << ": positions " << batch_start << "-" << batch_end
+                 << " (" << batch_size << " positions)" << endl;
 
-            for (const Move& move : moves) {
-                Position next_pos = apply_move(pos, move);
-                Position next_canonical = next_pos.canonical();
-                __uint128_t next_key = next_canonical.to_key();
+            // Build predecessor map for this batch only
+            unordered_map<__uint128_t, vector<__uint128_t>, KeyHash> predecessors;
 
-                Evaluation next_eval = tablebase[next_key];
-                if (next_eval.result == RESULT_UNKNOWN) {
-                    all_successors_evaluated = false;
-                    break;
+            for (size_t i = batch_start; i < batch_end; i++) {
+                __uint128_t pos_key = position_vec[i];
+
+                // Skip already evaluated
+                if (tablebase[pos_key].result != RESULT_UNKNOWN) continue;
+
+                Position pos = Position::from_key(pos_key);
+                vector<Move> moves = generate_moves(pos);
+
+                for (const Move& move : moves) {
+                    Position next_pos = apply_move(pos, move);
+                    Position next_canonical = next_pos.canonical();
+                    __uint128_t next_key = next_canonical.to_key();
+
+                    predecessors[next_key].push_back(pos_key);
                 }
-                successor_evals.push_back({next_eval.result, next_eval.depth});
             }
 
-            // If all successors evaluated, evaluate this position
-            if (all_successors_evaluated && !successor_evals.empty()) {
-                // Minimax: choose best outcome from current player's perspective
-                int8_t best_result = (pos.white_to_move ? -2 : 2);
-                uint8_t best_depth = 255;
+            // Propagate from newly evaluated positions
+            queue<__uint128_t> eval_queue;
+            for (size_t i = batch_start; i < batch_end; i++) {
+                if (tablebase[position_vec[i]].result != RESULT_UNKNOWN) {
+                    eval_queue.push(position_vec[i]);
+                }
+            }
 
-                for (const auto& [result, depth] : successor_evals) {
-                    uint8_t new_depth = depth + 1;
-                    if (new_depth < depth) new_depth = 255; // Overflow protection
+            size_t batch_evaluated = 0;
+            while (!eval_queue.empty()) {
+                __uint128_t current_key = eval_queue.front();
+                eval_queue.pop();
 
-                    bool better = false;
-                    if (pos.white_to_move) {
-                        // White wants to maximize
-                        if (result > best_result) better = true;
-                        else if (result == best_result && result == RESULT_WHITE_WIN && new_depth < best_depth) better = true;
-                        else if (result == best_result && result != RESULT_WHITE_WIN && new_depth > best_depth) better = true;
-                    } else {
-                        // Black wants to minimize
-                        if (result < best_result) better = true;
-                        else if (result == best_result && result == RESULT_BLACK_WIN && new_depth < best_depth) better = true;
-                        else if (result == best_result && result != RESULT_BLACK_WIN && new_depth > best_depth) better = true;
-                    }
+                // Check predecessors in current batch
+                if (predecessors.find(current_key) == predecessors.end()) continue;
 
-                    if (better) {
-                        best_result = result;
-                        best_depth = new_depth;
+                for (__uint128_t pred_key : predecessors[current_key]) {
+                    if (tablebase[pred_key].result != RESULT_UNKNOWN) continue;
+
+                    // Decrement successor count
+                    successor_count[pred_key]--;
+
+                    // If all successors evaluated, evaluate this position
+                    if (successor_count[pred_key] == 0) {
+                        Position pred_pos = Position::from_key(pred_key);
+                        vector<Move> moves = generate_moves(pred_pos);
+
+                        // Minimax
+                        int8_t best_result = (pred_pos.white_to_move ? -2 : 2);
+                        uint8_t best_depth = 255;
+
+                        for (const Move& move : moves) {
+                            Position next_pos = apply_move(pred_pos, move);
+                            Position next_canonical = next_pos.canonical();
+                            __uint128_t next_key = next_canonical.to_key();
+
+                            Evaluation next_eval = tablebase[next_key];
+                            int8_t result = next_eval.result;
+                            uint8_t depth = next_eval.depth + 1;
+                            if (depth < next_eval.depth) depth = 255; // Overflow
+
+                            bool better = false;
+                            if (pred_pos.white_to_move) {
+                                if (result > best_result) better = true;
+                                else if (result == best_result && result == RESULT_WHITE_WIN && depth < best_depth) better = true;
+                                else if (result == best_result && result != RESULT_WHITE_WIN && depth > best_depth) better = true;
+                            } else {
+                                if (result < best_result) better = true;
+                                else if (result == best_result && result == RESULT_BLACK_WIN && depth < best_depth) better = true;
+                                else if (result == best_result && result != RESULT_BLACK_WIN && depth > best_depth) better = true;
+                            }
+
+                            if (better) {
+                                best_result = result;
+                                best_depth = depth;
+                            }
+                        }
+
+                        tablebase[pred_key] = Evaluation(best_result, best_depth);
+                        eval_queue.push(pred_key);
+                        batch_evaluated++;
+                        total_evaluated++;
                     }
                 }
-
-                tablebase[pos_key] = Evaluation(best_result, best_depth);
-                newly_evaluated++;
-                evaluated++;
             }
+
+            // Free batch memory
+            predecessors.clear();
+
+            auto now = chrono::steady_clock::now();
+            auto elapsed = chrono::duration_cast<chrono::seconds>(now - start_time).count();
+            cout << "    Evaluated " << batch_evaluated << " in batch | Total: "
+                 << total_evaluated << "/" << canonical_positions.size()
+                 << " | Time: " << elapsed << "s" << endl;
         }
 
         auto now = chrono::steady_clock::now();
         auto elapsed = chrono::duration_cast<chrono::seconds>(now - start_time).count();
-        cout << "  Iteration " << iteration << ": evaluated " << newly_evaluated
-             << " positions | Total: " << evaluated << "/" << canonical_positions.size()
+        cout << "  Pass " << pass << " complete: " << (total_evaluated - last_evaluated)
+             << " new evaluations | Total: " << total_evaluated << "/" << canonical_positions.size()
              << " | Time: " << elapsed << "s" << endl;
 
-        // Safety check: if no progress and still unknowns, something is wrong
-        if (newly_evaluated == 0 && evaluated < canonical_positions.size()) {
-            cout << "  WARNING: No progress but " << (canonical_positions.size() - evaluated)
-                 << " positions still unknown (likely unreachable)" << endl;
+        // Stop if no progress
+        if (total_evaluated == last_evaluated) {
+            cout << "  No progress - stopping" << endl;
             break;
         }
 
-    } while (newly_evaluated > 0 && evaluated < canonical_positions.size());
+    } while (total_evaluated < canonical_positions.size() && pass < 50);
 
     auto end_time = chrono::steady_clock::now();
     auto duration = chrono::duration_cast<chrono::seconds>(end_time - start_time).count();
 
     cout << "\nRetrograde analysis complete:" << endl;
-    cout << "  Positions evaluated: " << evaluated << "/" << canonical_positions.size() << endl;
-    cout << "  Iterations: " << iteration << endl;
+    cout << "  Positions evaluated: " << total_evaluated << "/" << canonical_positions.size() << endl;
+    cout << "  Passes: " << pass << endl;
     cout << "  Time: " << duration << " seconds (" << (duration/60) << " minutes)" << endl;
 
     return tablebase;
