@@ -7,3 +7,5 @@ six_pawn_solver_cpp
 cpp_solver_output.log
 enum_checkpoint.bin
 retro_checkpoint.bin
+checkpoints/
+*.pt
